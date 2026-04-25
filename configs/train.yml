@@ -1,0 +1,23 @@
+seed: 42
+precision: fp16
+batch_size: 2
+grad_accum_steps: 4
+learning_rate: 0.0002
+weight_decay: 0.01
+warmup_steps: 1000
+max_steps: 10000
+grad_clip_norm: 1.0
+
+optimizer:
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+
+checkpoint:
+  save_dir: checkpoints
+  save_every: 500
+
+logging:
+  log_every: 10
+
+data:
+  num_workers: 2

@@ -1,0 +1,14 @@
+# CUDA-enabled PyTorch wheel source for this project.
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# Core runtime
+torch==2.5.1+cu121
+numpy
+datasets
+transformers
+sentencepiece
+tqdm
+pyyaml
+Pillow
+librosa
+scipy
