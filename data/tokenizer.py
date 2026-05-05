@@ -873,18 +873,9 @@ def get_tokenizer(
             return livorator.load(tokenizer_path, **kwargs)
         return livorator(**kwargs)
 
-    # Traditional tokenizers (word-level, character-level)
-    if tokenizer_type in {"word", "words", "word_level", "char", "character", "char_level"}:
-        from data.traditional_tokenizer import get_traditional_tokenizer
-        return get_traditional_tokenizer(
-            tokenizer_type=tokenizer_type,
-            tokenizer_path=tokenizer_path,
-            **kwargs,
-        )
-
     raise ValueError(
         f"Unsupported tokenizer_type '{tokenizer_type}'. "
-        "Expected one of: auto, bpe, livorator, word, char."
+        "Expected one of: auto, custom, bpe, livo, livorator."
     )
 
 
