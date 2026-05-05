@@ -1,26 +1,22 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import yaml
 
-# Ensure these imports match your new folder structure
-from data.tokenizer import livorator as Tokenizer 
 from model.embeddings import LearnedPositionEmbedding, TokenEmbedding
 from model.transformer_block import TransformerBlock
 
 @dataclass
 class Config:
-    vocab_size: int = 16384
-    max_length: int = 512
-    d_model: int = 384
-    num_layers: int = 6
-    num_heads: int = 6
-    ffn_dim: int = 1536
+    vocab_size: int = 50000
+    max_length: int = 1024
+    d_model: int = 768
+    num_layers: int = 12
+    num_heads: int = 12
+    ffn_dim: int = 3072
     dropout: float = 0.1
     pad_token_id: int = 0
     unk_token_id: int = 1

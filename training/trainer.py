@@ -31,12 +31,13 @@ class TrainerConfig:
     grad_accum_steps: int = 4
     learning_rate: float = 2e-4
     weight_decay: float = 0.01
-    warmup_steps: int = 1000
-    max_steps: int = 10000
+    warmup_steps: int = 50
+    max_steps: int = 1000
     grad_clip_norm: float = 1.0
     save_dir: str = "checkpoints"
-    save_every: int = 100
+    save_every: int = 10
     log_every: int = 10
+    eval_every: int = 100
     betas: tuple[float, float] = (0.9, 0.95)
     eps: float = 1.0e-8
     num_workers: int = 1
@@ -61,6 +62,7 @@ class TrainerConfig:
             save_dir=str(checkpoint_cfg.get("save_dir", cls.save_dir)),
             save_every=int(checkpoint_cfg.get("save_every", cls.save_every)),
             log_every=int(logging_cfg.get("log_every", cls.log_every)),
+            eval_every=int(logging_cfg.get("eval_every", cls.eval_every)),
             betas=tuple(optimizer_cfg.get("betas", cls.betas)),
             eps=float(optimizer_cfg.get("eps", cls.eps)),
             num_workers=int(data_cfg.get("num_workers", cls.num_workers)),
@@ -98,7 +100,7 @@ def build_scheduler(
 
 
 class Trainer:
-    """Minimal trainer for causal language modeling."""
+    """Trainer for causal language modeling with validation support."""
 
     def __init__(
         self,
@@ -107,6 +109,7 @@ class Trainer:
         config: TrainerConfig,
         device: torch.device,
         logger,
+        val_loader=None,
         optimizer: Optional[torch.optim.Optimizer] = None,
         scheduler: Optional[LambdaLR] = None,
         model_config: Optional[Dict[str, Any]] = None,
@@ -114,6 +117,7 @@ class Trainer:
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
+        self.val_loader = val_loader
         self.config = config
         self.device = device
         self.logger = logger
@@ -122,6 +126,7 @@ class Trainer:
         self.model_config = model_config or {}
         self.train_config = train_config or config.to_dict()
         self.global_step = 0
+        self.best_val_loss = float("inf")
 
         scaler_enabled = use_grad_scaler(device, config.precision)
         if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
@@ -202,6 +207,33 @@ class Trainer:
             ignore_index=self.model.config.pad_token_id,
         )
 
+    @torch.no_grad()
+    def evaluate(self, max_batches: int = 50) -> float:
+        """Run evaluation on the validation set and return average loss."""
+        if self.val_loader is None:
+            return float("inf")
+
+        self.model.eval()
+        total_loss = 0.0
+        num_batches = 0
+
+        for batch in self.val_loader:
+            if num_batches >= max_batches:
+                break
+            batch = move_to_device(batch, self.device)
+            with autocast_context(self.device, self.config.precision):
+                loss = self._forward_loss(batch)
+            total_loss += loss.item()
+            num_batches += 1
+
+        self.model.train()
+
+        if num_batches == 0:
+            return float("inf")
+
+        avg_loss = total_loss / num_batches
+        return avg_loss
+
     def train(self) -> Path:
         self.model.train()
         self.optimizer.zero_grad(set_to_none=True)
@@ -273,6 +305,35 @@ class Trainer:
                 if self.global_step % self.config.save_every == 0:
                     last_checkpoint = self.save_checkpoint()
                     self.logger.info("Saved checkpoint to %s", last_checkpoint)
+
+                # --- Periodic validation ---
+                if (
+                    self.val_loader is not None
+                    and self.config.eval_every > 0
+                    and self.global_step % self.config.eval_every == 0
+                ):
+                    val_loss = self.evaluate()
+                    val_ppl = perplexity_from_loss(val_loss)
+                    self.logger.info(
+                        "[EVAL] step=%d val_loss=%.4f val_ppl=%.2f%s",
+                        self.global_step,
+                        val_loss,
+                        val_ppl,
+                        " ★ best" if val_loss < self.best_val_loss else "",
+                    )
+                    if val_loss < self.best_val_loss:
+                        self.best_val_loss = val_loss
+                        best_path = self.checkpoint_dir / "best.pt"
+                        torch.save(
+                            {
+                                "step": self.global_step,
+                                "val_loss": val_loss,
+                                "model_state_dict": self.model.state_dict(),
+                                "model_config": self.model_config,
+                            },
+                            best_path,
+                        )
+                        self.logger.info("Saved best model to %s", best_path)
 
                 if self.global_step >= self.config.max_steps:
                     break

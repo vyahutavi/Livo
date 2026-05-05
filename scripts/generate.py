@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
         "--model-config",
         default=str(PROJECT_ROOT / "configs" / "model.yml"),
     )
+    parser.add_argument("--tokenizer", default=None, help="Path to trained tokenizer JSON")
     parser.add_argument("--prompt", default="Once upon a time", help="Starting text")
     parser.add_argument("--max-new-tokens", type=int, default=100)
     parser.add_argument("--temperature", type=float, default=0.8)
@@ -76,8 +77,13 @@ def main() -> None:
     model.eval()
     logger.info("Model loaded from step %d", ckpt.get("step", 0))
 
-    # 4. Setup tokenizer
-    tokenizer = livorator(vocab_size=config.vocab_size, max_length=config.max_length)
+    # 4. Setup tokenizer (load trained merges if available)
+    if args.tokenizer:
+        tokenizer = livorator.load(args.tokenizer)
+        logger.info("Loaded trained tokenizer from: %s", args.tokenizer)
+    else:
+        tokenizer = livorator(vocab_size=config.vocab_size, max_length=config.max_length)
+        logger.info("Using default tokenizer (no trained merges)")
 
     # 5. Generate
     logger.info("Prompt: %s", args.prompt)

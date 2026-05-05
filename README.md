@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">🧠 LIVO</h1>
   <p align="center"><strong>A from-scratch decoder-only transformer language model built with PyTorch</strong></p>
-  <p align="center">Custom trainable BPE tokenizer • ~17M parameters • Train on any dataset</p>
+  <p align="center">Custom trainable BPE tokenizer • ~124M parameters • 50K vocab • Train on any dataset</p>
 </p>
 
 ---
@@ -34,13 +34,13 @@ Train it on **any text dataset** — HuggingFace datasets, local text files, or 
 | Component | Details |
 |---|---|
 | **Architecture** | Decoder-only Transformer (GPT-style) |
-| **Parameters** | ~17.1M |
-| **Vocabulary** | 16,384 tokens (BPE) |
-| **Context Length** | 512 tokens |
-| **Model Dimension** | 384 |
-| **Layers** | 6 |
-| **Attention Heads** | 6 (head dim = 64) |
-| **FFN Hidden Dim** | 1,536 (4× d_model) |
+| **Parameters** | ~124M (text-only), ~200M (full multimodal) |
+| **Vocabulary** | 50,000 tokens (BPE) |
+| **Context Length** | 1,024 tokens |
+| **Model Dimension** | 768 |
+| **Layers** | 12 (LLM) + 4 (Vision) + 3 (Audio) + 3 (Speech) |
+| **Attention Heads** | 12 (head dim = 64) |
+| **FFN Hidden Dim** | 3,072 (4× d_model) |
 | **Activation** | GELU |
 | **Normalization** | Pre-LayerNorm |
 | **Position Encoding** | Learned |
@@ -241,12 +241,12 @@ text = tok.decode(tokens)               # "Hello, World!"
 ### Model Config (`configs/model.yml`)
 ```yaml
 model:
-  vocab_size: 16384
-  max_length: 512
-  d_model: 384
-  num_layers: 6
-  num_heads: 6
-  ffn_dim: 1536
+  vocab_size: 50000
+  max_length: 1024
+  d_model: 768
+  num_layers: 12
+  num_heads: 12
+  ffn_dim: 3072
   dropout: 0.1
 ```
 
@@ -268,9 +268,9 @@ grad_clip_norm: 1.0
 
 | Setup | Notes |
 |---|---|
-| **Minimum** | 8GB RAM, any modern CPU (slow but works) |
-| **Recommended** | NVIDIA GPU with 4GB+ VRAM (RTX 3050+) |
-| **Optimal** | NVIDIA GPU with 6GB+ VRAM, CUDA 12.1 |
+| **Minimum** | 16GB RAM, any modern CPU (slow but works) |
+| **Recommended** | NVIDIA GPU with 6GB+ VRAM (RTX 4050+) |
+| **Optimal** | NVIDIA GPU with 8GB+ VRAM, CUDA 12.1 |
 
 ---
 

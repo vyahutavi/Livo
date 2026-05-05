@@ -17,7 +17,7 @@ class livorator:
     - 16384 token vocabulary 
     - Character + subword tokenization
     - Efficient encoding/decoding
-    - Spike neural encoding support
+    - Binary hash encoding for sparse representations (CPU/CUDA)
     - Designed for small, efficient models with strong generalization.
     """
 
@@ -440,19 +440,23 @@ class livorator:
         threshold: float = 0.5
     ) -> 'torch.Tensor':
         """
-        Encode text to a deterministic binary spike representation.
+        Encode text to a deterministic binary hash representation.
+        
+        Creates sparse binary feature vectors from token IDs using
+        a deterministic hash function. Runs on standard hardware
+        (CPU or CUDA) — no specialized hardware required.
         
         Args:
             text: Input text
-            spike_dim: Width of the spike feature vector
-            device: Target device
-            threshold: Spike threshold in [0, 1]
+            spike_dim: Width of the binary feature vector
+            device: Target device ('cpu' or 'cuda')
+            threshold: Binarization threshold in [0, 1]
             
         Returns:
             Binary tensor of shape (1, seq_len, spike_dim)
         """
         if not TORCH_AVAILABLE:
-            raise RuntimeError("PyTorch required for spike encoding")
+            raise RuntimeError("PyTorch required for binary hash encoding")
         if spike_dim <= 0:
             raise ValueError(f"spike_dim must be positive, got {spike_dim}")
         if not (0.0 <= threshold <= 1.0):
@@ -869,9 +873,18 @@ def get_tokenizer(
             return livorator.load(tokenizer_path, **kwargs)
         return livorator(**kwargs)
 
+    # Traditional tokenizers (word-level, character-level)
+    if tokenizer_type in {"word", "words", "word_level", "char", "character", "char_level"}:
+        from data.traditional_tokenizer import get_traditional_tokenizer
+        return get_traditional_tokenizer(
+            tokenizer_type=tokenizer_type,
+            tokenizer_path=tokenizer_path,
+            **kwargs,
+        )
+
     raise ValueError(
         f"Unsupported tokenizer_type '{tokenizer_type}'. "
-        "Expected one of: auto, custom, bpe, livo, livorator."
+        "Expected one of: auto, bpe, livorator, word, char."
     )
 
 

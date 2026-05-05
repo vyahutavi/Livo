@@ -2,7 +2,7 @@
 
 ## 1. High-Level Architecture
 
-LIVO is a **decoder-only causal language model** — the same family as GPT-2, LLaMA, and Gemma. It processes text autoregressively: given a sequence of tokens, it predicts the next token at every position.
+LIVO is a **lightweight, decoder-only causal language model** — the same fundamental architecture family as GPT-4, LLaMA, and Gemma. At its core, it processes text autoregressively: given a sequence of tokens, it predicts the next token at every position.
 
 ```
 "Once upon a" → Model → predicts "time"
@@ -10,7 +10,49 @@ LIVO is a **decoder-only causal language model** — the same family as GPT-2, L
 ...
 ```
 
-### Why Decoder-Only (not Encoder-Decoder)?
+### System Overview
+
+```
+Input Text
+    │
+    ▼
+┌─────────────────────────┐
+│   livorator (BPE)       │  Trainable byte-pair encoding
+│   vocab_size: 16,384    │  train() → save() → load()
+└──────────┬──────────────┘
+           │
+           ▼
+┌──────────────────┐   ┌──────────────────────┐
+│ Token Embedding  │ + │ Position Embedding   │
+│ (16384 × 384)    │   │ (512 × 384)          │
+└──────────┬───────┘   └──────────┬────────────┘
+           └──────────┬───────────┘
+                      │
+           ┌──────────▼───────────┐
+           │  Transformer Block   │ ×12
+           │  ┌────────────────┐  │
+           │  │ LayerNorm      │  │
+           │  │ Causal MHA     │  │  12 heads, masked
+           │  │ Residual +     │  │
+           │  │ LayerNorm      │  │
+           │  │ FFN (GELU)     │  │  768 → 3072 → 768
+           │  │ Residual +     │  │
+           │  └────────────────┘  │
+           └──────────┬───────────┘
+                      │
+           ┌──────────▼───────────┐
+           │   Final LayerNorm    │
+           └──────────┬───────────┘
+                      │
+           ┌──────────▼───────────┐
+           │   LM Head (Linear)   │  Weight-tied (50000 × 768)
+           └──────────┬───────────┘
+                      │
+              Output Logits
+          (sampling → text)
+```
+
+### Why Decoder-Only?
 
 | Aspect | Decoder-Only (LIVO) | Encoder-Decoder (T5/BART) |
 |---|---|---|
@@ -18,8 +60,6 @@ LIVO is a **decoder-only causal language model** — the same family as GPT-2, L
 | **Use case** | Text generation, completion | Translation, summarization, Q&A |
 | **Parameters** | Single stack (efficient) | Two stacks (more params) |
 | **Modern trend** | GPT-4, LLaMA, Gemma, Mistral | T5, mBART, FLAN |
-
-For story generation on TinyStories, decoder-only is the natural and efficient choice.
 
 ---
 
@@ -43,8 +83,7 @@ The tokenizer converts raw text into integer token IDs and back.
 **Key design decisions:**
 - **Byte-level**: handles any Unicode text without unknown characters
 - **Heap-based merge**: O(N log N) BPE application instead of naive O(N²)
-- **Deterministic defaults**: seed corpus provides meaningful initial merges
-- **Spike encoding**: experimental hash-based binary representation for neural spike models
+- **Trainable**: Can be trained on any target dataset for optimal compression
 
 ### 2.2 Embeddings (model/embeddings.py)
 
@@ -52,10 +91,10 @@ Two embedding layers that convert token IDs into dense vectors:
 
 ```python
 # Token Embedding: token_id → vector
-TokenEmbedding(16384, 384)  # ~6.3M parameters
+TokenEmbedding(16384, 384)  # 6,291,456 parameters
 
 # Position Embedding: position → vector  
-LearnedPositionEmbedding(512, 384)  # ~197K parameters
+LearnedPositionEmbedding(512, 384)  # 196,608 parameters
 
 # Combined
 hidden = token_embed(ids) + position_embed(ids)  # (batch, seq, 384)
@@ -128,7 +167,7 @@ class LLM(nn.Module):
 ```
 
 **Weight Tying:** The `lm_head.weight` is the same tensor as `token_embedding.weight`. This:
-- Saves ~6.3M parameters (would be ~23.4M without tying)
+- Saves **6,291,456** parameters (would be ~23.4M without tying)
 - Forces the model to learn embeddings that are useful for both input and output
 - Is standard practice in modern LLMs
 
@@ -150,30 +189,7 @@ def forward(input_ids, attention_mask=None, labels=None):
 
 ## 3. Training Pipeline
 
-### 3.1 Data Flow
-
-```
-TinyStories (HuggingFace)
-    │
-    ▼
-TinyStoriesDataset
-    │  tokenize with livorator
-    │  pad to 512 tokens
-    │  create attention_mask
-    ▼
-CausalLMCollator
-    │  stack into batches
-    ▼
-DataLoader (batch_size=2, shuffle=True)
-    │
-    ▼
-Trainer
-    │  forward → loss → backward → optimizer step
-    ▼
-Checkpoints (saved every 500 steps)
-```
-
-### 3.2 Loss Function
+### 3.1 Loss Function
 
 **Shifted Cross-Entropy** — the standard causal LM training objective:
 
@@ -184,7 +200,7 @@ Labels:  [Once   upon  a     time <eos>  <pad>  <pad>]
 
 The model learns to predict the next token at every position. `<pad>` tokens are ignored in the loss (`ignore_index=0`).
 
-### 3.3 Optimizer & Schedule
+### 3.2 Optimizer & Schedule
 
 | Setting | Value | Rationale |
 |---|---|---|
@@ -198,7 +214,7 @@ The model learns to predict the next token at every position. `<pad>` tokens are
 | Grad accumulation | 4 steps | Effective batch = 8 |
 | Precision | FP16 | Half-precision for speed |
 
-### 3.4 Gradient Accumulation
+### 3.3 Gradient Accumulation
 
 With `batch_size=2` and `grad_accum_steps=4`:
 
@@ -216,53 +232,87 @@ This allows training with larger effective batches on limited GPU memory.
 
 ---
 
-## 4. Parameter Count Breakdown
+## 4. Parameter Count Breakdown (Current 124M)
 
 | Component | Parameters | % of Total |
 |---|---|---|
-| Token Embedding (shared with LM Head) | 6,291,456 | 36.7% |
-| Position Embedding | 196,608 | 1.1% |
-| Transformer Blocks (×6) | 10,646,784 | 62.2% |
-| &nbsp;&nbsp;&nbsp;&nbsp;├ Attention (per layer) | 591,360 | — |
-| &nbsp;&nbsp;&nbsp;&nbsp;├ FFN (per layer) | 1,181,568 | — |
-| &nbsp;&nbsp;&nbsp;&nbsp;└ LayerNorms (per layer) | 1,536 | — |
-| Final LayerNorm | 768 | ~0% |
-| **Total** | **17,135,616** | **100%** |
+| Token Embedding (shared with LM Head) | 38,400,000 | 30.9% |
+| Position Embedding | 786,432 | 0.6% |
+| Transformer Blocks (×12) | 85,054,464 | 68.5% |
+| &nbsp;&nbsp;&nbsp;&nbsp;├ Attention QKV weight (per layer) | 1,769,472 | — |
+| &nbsp;&nbsp;&nbsp;&nbsp;├ Attention QKV bias (per layer) | 2,304 | — |
+| &nbsp;&nbsp;&nbsp;&nbsp;├ Attention output weight (per layer) | 589,824 | — |
+| &nbsp;&nbsp;&nbsp;&nbsp;├ Attention output bias (per layer) | 768 | — |
+| &nbsp;&nbsp;&nbsp;&nbsp;├ FFN up: Linear(768→3072) + bias (per layer) | 2,362,368 | — |
+| &nbsp;&nbsp;&nbsp;&nbsp;├ FFN down: Linear(3072→768) + bias (per layer) | 2,360,064 | — |
+| &nbsp;&nbsp;&nbsp;&nbsp;└ LayerNorms ×2 (per layer) | 3,072 | — |
+| Final LayerNorm | 1,536 | ~0% |
+| **Total** | **~124,242,432** | **100%** |
 
-> Note: LM Head parameters are not counted separately because they are weight-tied with Token Embedding.
+> Note: LM Head (38,400,000) is weight-tied with Token Embedding — not counted separately. Without tying, total would be ~162M.
 
----
-
-## 5. Inference / Generation
-
-Text generation is autoregressive — one token at a time:
-
-```
-Step 1: input = [<bos>]           → model predicts "Once"
-Step 2: input = [<bos>, Once]     → model predicts "upon"
-Step 3: input = [<bos>, Once, upon] → model predicts "a"
-...until <eos> or max_new_tokens reached
-```
-
-**Sampling strategies** (implemented in `livorator`):
-
-| Strategy | Effect |
-|---|---|
-| **Temperature** (0.8) | Lower = more deterministic, Higher = more creative |
-| **Top-k** (50) | Only consider top 50 most likely tokens |
-| **Top-p / Nucleus** (0.9) | Only consider tokens within 90% cumulative probability |
+### VRAM Budget (FP16 Training)
+- **Model weights:** ~237 MB
+- **Optimizer states (AdamW):** ~950 MB
+- **Gradients:** ~237 MB
+- **Activations (checkpointed):** ~36 MB
+- **Total VRAM:** ~1.5 GB (Fits comfortably in RTX 4050 6GB with ~4.5 GB headroom)
 
 ---
 
-## 6. Design Decisions & Trade-offs
+## 5. Scale-Up Notes
 
-| Decision | Choice | Alternative | Rationale |
-|---|---|---|---|
-| Architecture | Decoder-only | Encoder-decoder | Simpler, efficient for generation |
-| Normalization | Pre-norm | Post-norm | More stable training, used by GPT-2+ |
-| Position encoding | Learned | RoPE / Sinusoidal | Simpler, works well for 512 context |
-| Activation | GELU | SiLU / ReLU | Standard for transformers since GPT-2 |
-| Attention | PyTorch MHA | Custom / Flash Attention | Simpler, correct, good enough for 17M |
-| Tokenizer | Custom BPE | SentencePiece / tiktoken | Educational, full control |
-| Weight tying | Enabled | Disabled | Saves 6.3M params, proven effective |
-| Gradient checkpointing | Enabled | Disabled | Saves ~50% memory, slight speed cost |
+The model has been scaled from 17M to **~124M parameters** (comparable to GPT-2 Small). Key changes:
+
+- **Vocabulary**: 16K → 50K (better compression for domain text)
+- **Model dimension**: 384 → 768
+- **Layers**: 6 → 12
+- **Attention heads**: 6 → 12 (head_dim = 64 preserved)
+- **FFN**: 1536 → 3072 (4× expansion preserved)
+- **Encoders**: Vision (4 layers), Audio (3 layers), Speech (3 layers) — all scaled to d_model=768
+
+### VRAM Feasibility
+The 124M model in FP16 consumes approximately **~2.3 GB** of VRAM during training. This fits comfortably into an **RTX 4050 (6GB)** with ~3.8 GB of headroom.
+
+### Pre-Training Dataset Strategy
+
+The dataset is **TBD**. The `train_tokenizer.py` script should be run on the target corpus to learn the 50K domain-specific BPE merges before training begins.
+
+---
+
+## 6. Config Reference
+
+### model.yml (LLM)
+```yaml
+vocab_size: 50000    # 50K BPE tokens
+d_model: 768         # Embedding dimension
+num_layers: 12       # Transformer blocks
+num_heads: 12        # Attention heads (head_dim = 64)
+ffn_dim: 3072        # 4× expansion
+dropout: 0.1         # Regularization
+max_length: 1024     # Context window
+```
+
+### train.yml
+```yaml
+seed: 42
+precision: fp16
+batch_size: 2
+grad_accum_steps: 4      # Effective batch = 8
+learning_rate: 0.0002    # 2e-4
+weight_decay: 0.01
+warmup_steps: 1000       # Linear warmup
+max_steps: 10000
+grad_clip_norm: 1.0
+optimizer:
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+checkpoint:
+  save_dir: checkpoints
+  save_every: 500
+logging:
+  log_every: 10
+  eval_every: 100
+data:
+  num_workers: 2
+```

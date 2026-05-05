@@ -1,0 +1,15 @@
+# Don't copy these into the Docker image
+checkpoints/*.pt
+checkpoints/*.wav
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.egg-info/
+.venv/
+venv/
+env/
+#
+git
+verify_125m.py
+project_analysis.md

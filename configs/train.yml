@@ -18,6 +18,7 @@ checkpoint:
 
 logging:
   log_every: 10
+  eval_every: 100
 
 data:
   num_workers: 2

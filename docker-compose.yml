@@ -1,0 +1,78 @@
+# ============================================================
+# LIVO Docker Compose — Easy deployment
+# ============================================================
+#
+# GPU Training:
+#   docker compose up train-tokenizer
+#   docker compose up train
+#   docker compose up generate
+#
+# CPU-only (no GPU):
+#   docker compose --profile cpu up verify
+#
+# Custom commands:
+#   docker compose run --rm livo python scripts/train.py --dataset openwebtext
+# ============================================================
+
+services:
+
+  # --- Base LIVO service (GPU) ---
+  livo:
+    build: .
+    container_name: livo
+    volumes:
+      - ./checkpoints:/app/checkpoints    # Persist checkpoints
+      - ./configs:/app/configs            # Persist configs (tokenizer.json)
+      - ./data:/app/data                  # Mount local data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '2gb'
+    stdin_open: true
+    tty: true
+
+  # --- Train tokenizer ---
+  train-tokenizer:
+    extends: livo
+    container_name: livo-tokenizer
+    command: >
+      python scripts/train_tokenizer.py
+      --dataset wikitext
+      --dataset-config wikitext-103-raw-v1
+      --vocab-size 50000
+
+  # --- Train model ---
+  train:
+    extends: livo
+    container_name: livo-train
+    command: >
+      python scripts/train.py
+      --dataset wikitext
+      --dataset-config wikitext-103-raw-v1
+      --tokenizer configs/tokenizer.json
+
+  # --- Generate text ---
+  generate:
+    extends: livo
+    container_name: livo-generate
+    command: >
+      python scripts/generate.py
+      --checkpoint checkpoints/latest.pt
+      --tokenizer configs/tokenizer.json
+      --prompt "Once upon a time"
+
+  # --- Verify system ---
+  verify:
+    extends: livo
+    container_name: livo-verify
+    command: python verify_125m.py
+
+  # --- Interactive shell ---
+  shell:
+    extends: livo
+    container_name: livo-shell
+    entrypoint: /bin/bash

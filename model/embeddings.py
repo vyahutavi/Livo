@@ -7,7 +7,7 @@ import torch.nn as nn
 class TokenEmbedding(nn.Module):
     """Token embedding table with padding awareness."""
 
-    def __init__(self, vocab_size: int, d_model: int, pad_token_id: int = 0):
+    def __init__(self, vocab_size: int, d_model: int, pad_token_id: int = 0): 
         super().__init__()
         self.embedding = nn.Embedding(
             vocab_size,

@@ -1,22 +1,3 @@
-"""
-LIVO Training Script — Train on any dataset.
-
-Usage:
-    # Default (TinyStories)
-    python scripts/train.py
-
-    # Any HuggingFace dataset
-    python scripts/train.py --dataset wikitext --dataset-config wikitext-2-raw-v1
-
-    # Local text files
-    python scripts/train.py --dataset ./my_texts/ --local
-
-    # With a trained tokenizer
-    python scripts/train.py --tokenizer configs/tokenizer.json
-
-    # Quick test run
-    python scripts/train.py --max-samples 1000 --max-steps 50
-"""
 import argparse
 import sys
 from pathlib import Path
@@ -58,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-samples", type=int, default=None, help="Limit dataset size")
     parser.add_argument("--max-steps", type=int, default=None, help="Override max training steps")
     parser.add_argument("--batch-size", type=int, default=None, help="Override batch size")
+    parser.add_argument("--val-split", type=float, default=0.05, help="Fraction of data for validation (0 to disable)")
 
     return parser.parse_args()
 
@@ -105,9 +87,20 @@ def main() -> None:
     )
     logger.info("Dataset size: %d samples", len(dataset))
 
+    # Split into train/val if requested
+    val_loader = None
+    if args.val_split > 0 and len(dataset) > 10:
+        val_size = max(1, int(len(dataset) * args.val_split))
+        train_size = len(dataset) - val_size
+        train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+        logger.info("Split: %d train / %d val (%.0f%%)", train_size, val_size, args.val_split * 100)
+    else:
+        train_dataset = dataset
+        val_dataset = None
+
     collator = CausalLMCollator(pad_token_id=model_config.pad_token_id)
     train_loader = torch.utils.data.DataLoader(
-        dataset,
+        train_dataset,
         batch_size=train_config.batch_size,
         shuffle=True,
         num_workers=train_config.num_workers,
@@ -115,6 +108,17 @@ def main() -> None:
         pin_memory=(device.type == "cuda"),
         drop_last=True,
     )
+
+    if val_dataset is not None:
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=train_config.batch_size,
+            shuffle=False,
+            num_workers=train_config.num_workers,
+            collate_fn=collator,
+            pin_memory=(device.type == "cuda"),
+            drop_last=False,
+        )
 
     # 5. Build model
     model = LLM(model_config)
@@ -128,6 +132,7 @@ def main() -> None:
         config=train_config,
         device=device,
         logger=logger,
+        val_loader=val_loader,
         model_config=model_cfg_dict,
         train_config=train_cfg_dict,
     )
